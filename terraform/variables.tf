@@ -91,3 +91,9 @@ variable "rocky_image_url" {
   type    = string
   default = "https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
 }
+
+variable "proxmox_ssh_user" {
+  description = "SSH user on the Proxmox node for disk-import operations. Needs an agent key authorised in this user's authorized_keys."
+  type        = string
+  default     = "root"
+}

@@ -12,6 +12,14 @@ provider "proxmox" {
   endpoint  = var.proxmox_endpoint
   api_token = var.proxmox_api_token
   insecure  = var.proxmox_insecure
+
+  # Importing a downloaded cloud image as a VM disk is done over SSH to the
+  # node, not the API. The provider uses ssh-agent and ignores ~/.ssh/config,
+  # so an agent key must be authorised for this user on the Proxmox host.
+  ssh {
+    agent    = true
+    username = var.proxmox_ssh_user
+  }
 }
 
 # Cached on the Proxmox host, so a rebuild does not re-download 600MB.

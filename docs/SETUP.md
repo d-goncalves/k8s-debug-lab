@@ -51,3 +51,16 @@ Skip Terraform. Build any Rocky/RHEL 9 host, then point Ansible at it:
 cd ansible
 ansible-playbook -i "<vm-ip>," site.yml
 ```
+
+## The provider needs SSH to the Proxmox node
+
+The `bpg/proxmox` provider imports the downloaded cloud image as a VM disk
+**over SSH to the node**, not through the API. It uses `ssh-agent` and
+deliberately **ignores `~/.ssh/config`**. So:
+
+1. An agent key must be authorised for the provisioning user in that user's
+   `authorized_keys` on the Proxmox host (default `root`).
+2. Set `proxmox_ssh_user` in `terraform.tfvars` to match.
+
+Symptom if this is missing:
+`unable to authenticate user "" over SSH to <node>:22 ... no supported methods remain`

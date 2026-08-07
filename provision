@@ -19,24 +19,29 @@ ok() { c '0;32' "✓ $1"; }
 no() { c '0;31' "✗ $1"; }
 i()  { c '0;36' "→ $1"; }
 
-# --- resolve VM connection details from terraform.tfvars ---
-tfvar() { grep -E "^\s*$1\s*=" "$TF_DIR/terraform.tfvars" 2>/dev/null | head -1 | sed -E 's/[^=]*=\s*"?([^"]*)"?.*/\1/' | tr -d ' '; }
-vm_ip()   { tfvar vm_address | cut -d/ -f1; }
-vm_user() { local u; u=$(tfvar vm_user); echo "${u:-rocky}"; }
+# --- resolve VM connection details from terraform outputs (authoritative) ---
+tfout()   { terraform -chdir="$TF_DIR" output -raw "$1" 2>/dev/null; }
+vm_ip()   { tfout vm_address; }
+vm_user() { local u; u=$(tfout ssh_user); echo "${u:-rocky}"; }
 SSH_KEY="$ROOT/../.ssh/scrive-interview"; [ -f "$HOME/.ssh/scrive-interview" ] && SSH_KEY="$HOME/.ssh/scrive-interview"
 
-rsh() { # run a command on the VM as root
+SSH_USER="rocky" # cloud-init user; privileged ops use sudo
+rsh() { # unprivileged command on the VM
   local ip; ip=$(vm_ip)
-  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@"
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$(vm_user)@$ip" "$@"
+}
+rroot() { # root command on the VM, via sudo
+  local ip; ip=$(vm_ip)
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "$(vm_user)@$ip" "sudo bash -s"
 }
 
-# a fault script, sourced remotely, with helpers injected
+# a fault script, sourced remotely as root, with helpers injected
 run_fault() { # <action> <layer> <id>
   local action="$1" layer="$2" id="$3"
   local file="$FAULT_DIR/$layer/$id.sh"
   [ -f "$file" ] || { no "unknown fault: $id"; return 1; }
   local body; body=$(cat "$file")
-  rsh "bash -s" <<REMOTE
+  rroot <<REMOTE
 set -e
 export STACK_DIR=/opt/lab/stack
 k() { /usr/local/bin/k3s kubectl "\$@"; }
@@ -122,12 +127,12 @@ cmd_status() {
   cmd_verify
 }
 
-cmd_ssh()   { local ip; ip=$(vm_ip); exec ssh -o StrictHostKeyChecking=accept-new "root@$ip"; }
+cmd_ssh()   { local ip; ip=$(vm_ip); exec ssh -o StrictHostKeyChecking=accept-new "$(vm_user)@$ip"; }
 
 cmd_kubeconfig() {
   local ip; ip=$(vm_ip)
-  rsh "cat /etc/rancher/k3s/k3s.yaml" > "$STATE_DIR/kubeconfig"
-  ssh -o StrictHostKeyChecking=accept-new -f -N -L 6443:127.0.0.1:6443 "root@$ip"
+  rsh "sudo cat /etc/rancher/k3s/k3s.yaml" > "$STATE_DIR/kubeconfig"
+  ssh -o StrictHostKeyChecking=accept-new -f -N -L 6443:127.0.0.1:6443 "$(vm_user)@$ip"
   i "tunnel open on localhost:6443"
   i "run: export KUBECONFIG=$STATE_DIR/kubeconfig"
 }
