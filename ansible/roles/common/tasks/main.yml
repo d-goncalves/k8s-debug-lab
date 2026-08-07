@@ -1,0 +1,28 @@
+---
+# iptables-nft is required for k3s kube-proxy to program service rules.
+# Without it every pod fails with "no route to host" to the API ClusterIP.
+- name: Install base packages
+  ansible.builtin.dnf:
+    name:
+      - iptables-nft
+      - lsof
+      - chrony
+      - curl
+      - bind-utils
+    state: present
+
+- name: Ensure chrony is running (time sync)
+  ansible.builtin.systemd:
+    name: chronyd
+    enabled: true
+    state: started
+
+- name: Set hostname
+  ansible.builtin.hostname:
+    name: k8s-debug-lab
+
+- name: Point demo.local at localhost (Traefik answers on the node)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.0.1 demo.local"
+    state: present

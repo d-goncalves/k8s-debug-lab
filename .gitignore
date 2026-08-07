@@ -1,0 +1,19 @@
+# Real environment values - never commit
+terraform/terraform.tfvars
+ansible/inventory.ini
+*.token*
+.token.json
+
+# Terraform state and plugins
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Ansible
+*.retry
+
+# Editor / OS
+.DS_Store
+*.swp

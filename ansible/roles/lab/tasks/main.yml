@@ -1,0 +1,37 @@
+---
+- name: Create lab directory on the VM
+  ansible.builtin.file:
+    path: /opt/lab
+    state: directory
+    mode: "0755"
+
+- name: Ship the demo stack manifests
+  ansible.builtin.copy:
+    src: stack/
+    dest: /opt/lab/stack/
+    mode: "0644"
+
+- name: Apply the demo stack
+  ansible.builtin.command: /usr/local/bin/k3s kubectl apply -f /opt/lab/stack/
+  register: applied
+  changed_when: "'created' in applied.stdout or 'configured' in applied.stdout"
+
+- name: Wait for all deployments to be available
+  ansible.builtin.command: >
+    /usr/local/bin/k3s kubectl wait --for=condition=available
+    --timeout=240s deployment --all -n demo
+  changed_when: false
+  retries: 3
+  delay: 15
+  register: dep_ready
+  until: dep_ready.rc == 0
+
+- name: Verify the stack is healthy (playbook FAILS if not)
+  ansible.builtin.command: curl -s --max-time 8 http://demo.local/
+  register: health
+  changed_when: false
+  failed_when: "'demo web is serving' not in health.stdout"
+
+- name: Report baseline
+  ansible.builtin.debug:
+    msg: "Baseline healthy: {{ health.stdout }}"

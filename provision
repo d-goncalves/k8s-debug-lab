@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# provision - k8s-debug-lab lifecycle CLI. Runs on your workstation.
+#
+# Manages a disposable k3s VM and injects/reverts named faults for debugging
+# practice. Faults execute on the VM over ssh (many are host-level and only
+# make sense there); you never type them yourself. Debugging is done by YOU
+# over `provision ssh`, exactly like a real live test.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TF_DIR="$ROOT/terraform"
+ANS_DIR="$ROOT/ansible"
+FAULT_DIR="$ROOT/lab/faults"
+STATE_DIR="$ROOT/.state"
+mkdir -p "$STATE_DIR"
+
+c()  { printf '\033[%sm%s\033[0m\n' "$1" "$2"; }
+ok() { c '0;32' "✓ $1"; }
+no() { c '0;31' "✗ $1"; }
+i()  { c '0;36' "→ $1"; }
+
+# --- resolve VM connection details from terraform.tfvars ---
+tfvar() { grep -E "^\s*$1\s*=" "$TF_DIR/terraform.tfvars" 2>/dev/null | head -1 | sed -E 's/[^=]*=\s*"?([^"]*)"?.*/\1/' | tr -d ' '; }
+vm_ip()   { tfvar vm_address | cut -d/ -f1; }
+vm_user() { local u; u=$(tfvar vm_user); echo "${u:-rocky}"; }
+SSH_KEY="$ROOT/../.ssh/scrive-interview"; [ -f "$HOME/.ssh/scrive-interview" ] && SSH_KEY="$HOME/.ssh/scrive-interview"
+
+rsh() { # run a command on the VM as root
+  local ip; ip=$(vm_ip)
+  ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 "root@$ip" "$@"
+}
+
+# a fault script, sourced remotely, with helpers injected
+run_fault() { # <action> <layer> <id>
+  local action="$1" layer="$2" id="$3"
+  local file="$FAULT_DIR/$layer/$id.sh"
+  [ -f "$file" ] || { no "unknown fault: $id"; return 1; }
+  local body; body=$(cat "$file")
+  rsh "bash -s" <<REMOTE
+set -e
+export STACK_DIR=/opt/lab/stack
+k() { /usr/local/bin/k3s kubectl "\$@"; }
+$body
+$action
+REMOTE
+}
+
+meta() { sed -n "s/^# $2: //p" "$1" | head -1; }
+
+cmd_list() {
+  printf '\n%-32s %-10s %s\n' "ID" "LAYER" "SYMPTOM"
+  printf '%-32s %-10s %s\n' "--" "-----" "-------"
+  for layer in k8s host; do
+    for f in "$FAULT_DIR/$layer"/*.sh; do
+      [ -f "$f" ] || continue
+      printf '%-32s %-10s %s\n' "$(basename "$f" .sh)" "$layer" "$(meta "$f" symptom)"
+    done
+  done
+  echo
+}
+
+cmd_break() {
+  local random=0 n=0 ids=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -r|--random) random=1; n="${2:-3}"; shift 2;;
+      *) ids+=("$1"); shift;;
+    esac
+  done
+  if [ "$random" = 1 ]; then
+    mapfile -t ids < <(for l in k8s host; do ls "$FAULT_DIR/$l"; done | sed 's/.sh$//' | sort -R | head -n "$n")
+  fi
+  for id in "${ids[@]}"; do
+    local layer=k8s; [ -f "$FAULT_DIR/host/$id.sh" ] && layer=host
+    i "injecting $id ($layer)"
+    if run_fault inject "$layer" "$id" >/dev/null 2>&1; then
+      echo "$id" >> "$STATE_DIR/active"; ok "$id"
+    else
+      no "$id failed to inject"
+    fi
+  done
+  sort -u "$STATE_DIR/active" -o "$STATE_DIR/active" 2>/dev/null || true
+}
+
+cmd_reveal() {
+  [ -s "$STATE_DIR/active" ] || { i "no faults currently injected"; return; }
+  echo; c '1;33' "Currently injected:"
+  while read -r id; do
+    local layer=k8s; [ -f "$FAULT_DIR/host/$id.sh" ] && layer=host
+    local f="$FAULT_DIR/$layer/$id.sh"
+    printf '\n  %s (%s)\n' "$id" "$layer"
+    printf '    answer: %s\n' "$(meta "$f" answer)"
+  done < "$STATE_DIR/active"
+  echo
+}
+
+cmd_reset() {
+  [ -s "$STATE_DIR/active" ] || { i "nothing to reset"; }
+  while read -r id; do
+    [ -z "$id" ] && continue
+    local layer=k8s; [ -f "$FAULT_DIR/host/$id.sh" ] && layer=host
+    i "reverting $id"
+    run_fault revert "$layer" "$id" >/dev/null 2>&1 && ok "$id" || no "$id revert failed"
+  done < "${STATE_DIR}/active" 2>/dev/null || true
+  : > "$STATE_DIR/active"
+  cmd_verify
+}
+
+cmd_verify() {
+  local ip; ip=$(vm_ip)
+  local a b
+  a=$(rsh "curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://demo.local/" 2>/dev/null || echo 000)
+  b=$(rsh "curl -s --max-time 8 http://demo.local/api/" 2>/dev/null || echo "")
+  if [ "$a" = "200" ]; then ok "curl / -> 200"; else no "curl / -> $a"; fi
+  if echo "$b" | grep -q "api ok"; then ok "curl /api/ -> api ok"; else no "curl /api/ -> ${b:-no response}"; fi
+}
+
+cmd_status() {
+  local ip; ip=$(vm_ip)
+  [ -n "$ip" ] || { no "no VM (run: provision create)"; return 1; }
+  if rsh true 2>/dev/null; then ok "VM reachable at $ip"; else no "VM $ip not reachable"; return 1; fi
+  cmd_verify
+}
+
+cmd_ssh()   { local ip; ip=$(vm_ip); exec ssh -o StrictHostKeyChecking=accept-new "root@$ip"; }
+
+cmd_kubeconfig() {
+  local ip; ip=$(vm_ip)
+  rsh "cat /etc/rancher/k3s/k3s.yaml" > "$STATE_DIR/kubeconfig"
+  ssh -o StrictHostKeyChecking=accept-new -f -N -L 6443:127.0.0.1:6443 "root@$ip"
+  i "tunnel open on localhost:6443"
+  i "run: export KUBECONFIG=$STATE_DIR/kubeconfig"
+}
+
+cmd_create() {
+  ( cd "$TF_DIR" && terraform init -input=false >/dev/null && terraform apply -auto-approve )
+  local ip; ip=$(vm_ip)
+  ssh-keygen -R "$ip" >/dev/null 2>&1 || true
+  i "waiting for ssh on $ip"
+  until ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 "$(vm_user)@$ip" true 2>/dev/null; do sleep 5; done
+  i "running ansible"
+  ( cd "$ANS_DIR" && ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i "$ip," site.yml )
+  : > "$STATE_DIR/active"
+  cmd_verify
+}
+
+cmd_destroy() { ( cd "$TF_DIR" && terraform destroy -auto-approve ); : > "$STATE_DIR/active"; }
+cmd_rebuild() { cmd_destroy; cmd_create; }
+
+usage() {
+  cat <<U
+provision - k8s-debug-lab
+
+  create        provision the VM (terraform) and configure it (ansible)
+  destroy       tear the VM down
+  rebuild       destroy + create, clean slate
+  status        is the VM up and the stack healthy
+  verify        run the two acceptance checks
+
+  list          show the fault catalogue
+  break <id>... inject named faults
+  break -r N    inject N random faults
+  reveal        show what is injected (answer key)
+  reset         revert everything, back to healthy
+
+  ssh           shell into the VM to debug
+  kubeconfig    fetch kubeconfig + open a localhost:6443 tunnel
+U
+}
+
+case "${1:-}" in
+  create) cmd_create;; destroy) cmd_destroy;; rebuild) cmd_rebuild;;
+  status) cmd_status;; verify) cmd_verify;;
+  list) cmd_list;; break) shift; cmd_break "$@";;
+  reveal) cmd_reveal;; reset) cmd_reset;;
+  ssh) cmd_ssh;; kubeconfig) cmd_kubeconfig;;
+  ""|-h|--help|help) usage;;
+  *) no "unknown command: $1"; usage; exit 1;;
+esac

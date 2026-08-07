@@ -1,0 +1,8 @@
+---
+- name: Build the k8s-debug-lab host
+  hosts: all
+  gather_facts: true
+  roles:
+    - common
+    - k3s
+    - lab
