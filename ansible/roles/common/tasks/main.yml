@@ -1,4 +1,13 @@
 ---
+# Rocky cloud images run package operations via cloud-init on first boot.
+# Ansible connects as soon as sshd is up, so without this wait the k3s
+# installer's dnf collides with cloud-init's on the rpm lock and fails the
+# GPG import. Block until cloud-init is done before touching any packages.
+- name: Wait for cloud-init to finish
+  ansible.builtin.command: cloud-init status --wait
+  changed_when: false
+  failed_when: false
+
 # iptables-nft is required for k3s kube-proxy to program service rules.
 # Without it every pod fails with "no route to host" to the API ClusterIP.
 - name: Install base packages

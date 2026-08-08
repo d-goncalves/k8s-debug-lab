@@ -73,7 +73,11 @@ cmd_break() {
     esac
   done
   if [ "$random" = 1 ]; then
-    mapfile -t ids < <(for l in k8s host; do ls "$FAULT_DIR/$l"; done | sed 's/.sh$//' | sort -R | head -n "$n")
+    # portable to bash 3.2 (macOS default): no mapfile
+    ids=()
+    while IFS= read -r line; do ids+=("$line"); done < <(
+      for l in k8s host; do ls "$FAULT_DIR/$l"; done | sed 's/.sh$//' | sort -R | head -n "$n"
+    )
   fi
   for id in "${ids[@]}"; do
     local layer=k8s; [ -f "$FAULT_DIR/host/$id.sh" ] && layer=host
