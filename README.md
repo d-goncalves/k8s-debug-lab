@@ -32,7 +32,7 @@ real breakage, and the only safe way to get reps is a box you can destroy.
 |-------|------|------|
 | VM provisioning | Terraform (`bpg/proxmox`) | create/destroy the Rocky 9 VM |
 | Host + cluster config | Ansible | k3s, tooling, deploy the stack, verify baseline |
-| Fault lifecycle | `provision` (bash) | inject / reveal / reset, run from your Mac |
+| Fault lifecycle | `provision` (Python + Click) | inject / reveal / reset, run from your Mac |
 | Workload | k3s + Traefik | `demo` namespace, `demo.local` |
 
 Faults **execute on the VM** (many are host-level: systemd, disk, file
@@ -63,7 +63,9 @@ $EDITOR terraform/terraform.tfvars     # endpoint, token, network, ssh key
 ./provision reset
 ```
 
-Requirements on your workstation: `terraform`, `ansible`, `ssh`, `curl`.
+Requirements on your workstation: `terraform`, `ansible`, `ssh`, `curl`, `python3`.
+The `provision` wrapper creates a local `.venv` and installs its one Python
+dependency (Click) automatically on first run.
 
 ## Fault catalogue
 
@@ -88,4 +90,4 @@ than guessing — is written up in [docs/METHOD.md](docs/METHOD.md).
 ## Note on authorship
 
 The methodology docs were developed with AI assistance during interview prep.
-The Terraform, Ansible, stack and fault catalogue are my own implementation.
+The Terraform, Ansible, stack, fault catalogue and CLI are my own implementation.
