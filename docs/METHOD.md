@@ -111,7 +111,7 @@ This is the demo stack, hop by hop. Every hop is a place something can break.
 ```
 curl http://demo.local/
   │
-  ├─ 1. /etc/hosts resolves demo.local ──► 192.168.1.23
+  ├─ 1. /etc/hosts resolves demo.local ──► 192.168.1.60
   │
   ├─ 2. port 80 on the node ──► Traefik pod (the actual proxy)
   │
